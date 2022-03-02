@@ -288,7 +288,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let build_method = generate_build_method(original_fields, &original_ident);
 
     // Create the builder struct
+    let doc_string = format!("Implements the builder pattern for [`{original_ident}`]");
+    let doc = quote! {
+        #[doc = #doc_string]
+    };
     let builder_struct = quote! {
+        #doc
         pub struct #builder_struct_name {
             #(#builder_fields,)*
         }
