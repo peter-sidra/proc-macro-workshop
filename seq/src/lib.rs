@@ -5,6 +5,11 @@ use syn::{
     Lit, RangeLimits, Token,
 };
 
+enum BodySection {
+    Repeated(TokenStream),
+    Normal(TokenStream),
+}
+
 #[derive(Debug)]
 struct SeqRange {
     ident: Ident,
@@ -52,7 +57,7 @@ impl Parse for SeqRange {
 
 struct SeqInput {
     seq_range: SeqRange,
-    body: proc_macro2::TokenStream,
+    body: TokenStream,
 }
 
 impl Parse for SeqInput {
@@ -99,6 +104,8 @@ impl Expander {
                         if punct.as_char() == '~' {
                             if let Some(TokenTree::Ident(next_ident)) = ts_iter_clone.next() {
                                 if self.ident == next_ident {
+                                    // TODO: check for a suffix (another [~][N]) pattern
+
                                     // We matched the [ident][~][N] pattern
                                     // Create new unified ident
                                     let literal = TokenTree::Literal(
@@ -134,11 +141,50 @@ impl Expander {
         out_ts
     }
 
-    fn expand(&self, ts: TokenStream) -> TokenStream {
+    fn expand_section(&self, ts: TokenStream) -> TokenStream {
         self.range
             .clone()
             .map(|i| self.process_ts(ts.clone(), i))
             .collect()
+    }
+
+    fn expand(&self, ts: TokenStream) -> TokenStream {
+        let mut out_ts = TokenStream::new();
+        let mut ts_iter = ts.into_iter();
+
+        while let Some(tt) = ts_iter.next() {
+            match tt {
+                TokenTree::Group(ref group) => {
+                    // Recurse down the group
+                    let mut expanded_group =
+                        Group::new(group.delimiter(), self.expand(group.stream()));
+
+                    expanded_group.set_span(group.span());
+
+                    out_ts.append(TokenTree::Group(expanded_group));
+                }
+                TokenTree::Punct(ref punct) if punct.as_char() == '#' => {
+                    let mut ts_iter_clone = ts_iter.clone();
+                    if let Some(TokenTree::Group(group)) = ts_iter_clone.next() {
+                        if let Some(TokenTree::Punct(punct)) = ts_iter_clone.next() {
+                            if punct.as_char() == '*' {
+                                // Matched the repetition pattern
+                                out_ts.extend(self.expand_section(group.stream()));
+
+                                // Advance the token stream iterator past the *
+                                ts_iter = ts_iter_clone;
+
+                                continue;
+                            }
+                        }
+                    }
+                    out_ts.append(tt);
+                }
+                _ => out_ts.append(tt),
+            };
+        }
+
+        out_ts
     }
 }
 
@@ -149,8 +195,6 @@ pub fn seq(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     //     Ok(sr) => sr,
     //     Err(err) => return proc_macro::TokenStream::from(err.to_compile_error()),
     // };
-
-    println!("Ident = {}, range = {:?}", seq_range.ident, seq_range.range);
 
     println!("body = {body}");
     println!("body = {:#?}", body);
