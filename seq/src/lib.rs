@@ -38,7 +38,7 @@ fn is_unified_ident(
                     // Create new unified ident
                     let literal = TokenTree::Literal(proc_macro2::Literal::i32_unsuffixed(index));
                     let mut new_ident = format_ident!("{ident}{literal}");
-                    new_ident.set_span(repeat_ident.span());
+                    new_ident.set_span(ident.span());
 
                     return Some((new_ident, 2));
                 }
@@ -243,10 +243,6 @@ pub fn seq(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         sectioned,
     } = parse_macro_input!(input as SeqInput);
 
-    println!("body = {body}");
-    println!("body = {:#?}", body);
-    println!("sectioned = {sectioned}");
-
     let expander = Expander {
         ident: seq_range.ident,
         range: seq_range.range,
@@ -255,6 +251,6 @@ pub fn seq(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let result = expander.expand(body);
 
-    println!("Result: {result}");
+    // println!("Result: {result}");
     result.into()
 }
