@@ -28,7 +28,6 @@ fn process_input(_args: TokenStream, input: syn::Item) -> syn::Result<()> {
         ));
     };
 
-    // let mut prev = String::from("");
     let mut current_iter = input_enum.variants.clone().into_iter();
     let _ = current_iter.next();
     let prev_iter = input_enum.variants.clone().into_iter();
@@ -92,7 +91,9 @@ impl SortMatchVisitor {
         }
     }
 
-    // Concatenate the paths of the arm into a single string
+    /// Concatenate the paths of the arm into a single string
+    ///
+    /// Returns the concatenated string and the pattern token stream
     fn get_arm_pat(arm: &syn::Arm) -> Option<ConcatenatedPath> {
         let get_complete_path_str = |path: &syn::Path| {
             let mut path_str = String::from("");
@@ -122,12 +123,20 @@ impl SortMatchVisitor {
                 string: get_complete_path_str(&pat_tuple_struct.path),
                 tokens: pat_tuple_struct.path.to_token_stream(),
             }),
+            syn::Pat::Ident(ref pat_ident) => Some(ConcatenatedPath {
+                string: pat_ident.ident.to_string(),
+                tokens: pat_ident.ident.clone().into_token_stream(),
+            }),
+            syn::Pat::Wild(ref pat_wild) => Some(ConcatenatedPath {
+                string: "_".to_owned(),
+                tokens: pat_wild.into_token_stream(),
+            }),
             _ => None,
         }
     }
 
-    // Compare 2 match arms and check if the current match arm come before
-    // the previous match arm, in which case return the idents of the match arms
+    /// Compare 2 match arms and check if the current match arm should come before
+    /// the previous match arm, in which case return the patterns of the match arms
     fn is_arm_out_of_place(
         current: &syn::Arm,
         prev: &syn::Arm,
@@ -135,6 +144,9 @@ impl SortMatchVisitor {
         if let (Some(current_path), Some(prev_path)) =
             (Self::get_arm_pat(current), Self::get_arm_pat(prev))
         {
+            if prev_path.string == "_" {
+                return Some((current_path, prev_path));
+            }
             if current_path.string < prev_path.string {
                 return Some((current_path, prev_path));
             }
@@ -144,10 +156,12 @@ impl SortMatchVisitor {
     }
 
     fn check_arms_sorted(arms: &Vec<syn::Arm>) -> syn::Result<()> {
+        // Check for any unsupported arm patterns
         for arm in arms {
             Self::check_arm_supported(arm)?
         }
 
+        // Check the sortedness of the arms
         let mut current_iter = arms.iter();
         let _ = current_iter.next();
         let prev_iter = arms.iter();
@@ -182,6 +196,7 @@ impl syn::visit_mut::VisitMut for SortMatchVisitor {
             // Found a #[sorted] attribute on a match statement
 
             // Remove the #[sorted] attribute from the token stream
+            // so that the stable compiler doesn't error out
             node.attrs.remove(index);
 
             // Analyze the match arms
@@ -197,6 +212,7 @@ impl syn::visit_mut::VisitMut for SortMatchVisitor {
 
 // TODO: find a better way to communicate the sort errors to the caller
 fn process_check(input: TokenStream) -> Result<TokenStream, TokenStream> {
+    // Parse the decorated function
     let mut decorated_fn = match syn::parse::<syn::ItemFn>(input) {
         Ok(item_fn) => item_fn,
         Err(error) => return Err(TokenStream::from(error.to_compile_error())),
@@ -204,6 +220,8 @@ fn process_check(input: TokenStream) -> Result<TokenStream, TokenStream> {
 
     println!("{decorated_fn:#?}");
 
+    // Use the visitor pattern to visit all match expressions inside the decorated function
+    // and process those decorated with the #[sorted] attribute
     let mut sort_match_visitor = SortMatchVisitor {
         sort_errors: Vec::new(),
     };
