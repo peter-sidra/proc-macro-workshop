@@ -5,12 +5,19 @@ use syn::{
     Lit, RangeLimits, Token,
 };
 
-// Detects the repeat pattern #()*
-fn is_repeat_pattern(punct: &Punct, rest: &proc_macro2::token_stream::IntoIter) -> Option<Group> {
+/// Detects the repeat pattern '#()*'
+fn is_repeat_pattern(
+    punct: &Punct,
+    rest: &mut proc_macro2::token_stream::IntoIter,
+) -> Option<Group> {
     if punct.as_char() == '#' {
-        let mut iter = rest.clone();
-        if let Some(TokenTree::Group(group)) = iter.next() {
-            if matches!(iter.next(), Some(TokenTree::Punct(punct)) if punct.as_char() == '*') {
+        let mut rest_clone = rest.clone();
+        if let Some(TokenTree::Group(group)) = rest_clone.next() {
+            if matches!(rest_clone.next(), Some(TokenTree::Punct(punct)) if punct.as_char() == '*')
+            {
+                // Advance the rest iter past the '*'
+                *rest = rest_clone;
+
                 return Some(group);
             }
         }
@@ -19,14 +26,15 @@ fn is_repeat_pattern(punct: &Punct, rest: &proc_macro2::token_stream::IntoIter) 
     None
 }
 
-// Detects the unified ident pattern [ident][~][ident]
-// returns the unified pattern and the number of consumed tokens
-fn is_unified_ident(
+/// Detects the unified ident pattern
+///
+/// Returns the unified pattern and the number of consumed tokens
+fn create_unified_ident(
     ident: &Ident,
     repeat_ident: &Ident,
     index: i32,
-    rest: &proc_macro2::token_stream::IntoIter,
-) -> Option<(Ident, usize)> {
+    rest: &mut proc_macro2::token_stream::IntoIter,
+) -> Option<Ident> {
     let mut rest_clone = rest.clone();
     if let Some(TokenTree::Punct(punct)) = rest_clone.next() {
         if punct.as_char() == '~' {
@@ -40,7 +48,10 @@ fn is_unified_ident(
                     let mut new_ident = format_ident!("{ident}{literal}");
                     new_ident.set_span(ident.span());
 
-                    return Some((new_ident, 2));
+                    // Advance the token stream iterator past the repeat ident
+                    *rest = rest_clone;
+
+                    return Some(new_ident);
                 }
             }
         }
@@ -101,12 +112,13 @@ struct SeqInput {
 }
 
 impl SeqInput {
+    /// Detect if the token stream contains the repeat sequence
     fn contains_repeat(body: TokenStream) -> bool {
         let mut iter = body.into_iter();
         while let Some(tt) = iter.next() {
             let result = match tt {
                 TokenTree::Group(group) => Self::contains_repeat(group.stream()),
-                TokenTree::Punct(ref punct) => is_repeat_pattern(punct, &iter).is_some(),
+                TokenTree::Punct(ref punct) => is_repeat_pattern(punct, &mut iter).is_some(),
                 _ => false,
             };
             if result == true {
@@ -162,12 +174,9 @@ impl Expander {
                     literal.set_span(ident.span());
                     return literal;
                 } else {
-                    if let Some((new_ident, num_of_consumed_tokens)) =
-                        is_unified_ident(ident, &self.ident, index, ts_iter)
+                    if let Some(new_ident) =
+                        create_unified_ident(ident, &self.ident, index, ts_iter)
                     {
-                        // Advance the iterator past the consumed tokens
-                        ts_iter.nth(num_of_consumed_tokens - 1);
-
                         return TokenTree::Ident(new_ident);
                     }
                 }
@@ -215,13 +224,9 @@ impl Expander {
                     out_ts.append(TokenTree::Group(expanded_group));
                 }
                 TokenTree::Punct(ref punct) => {
-                    if let Some(group) = is_repeat_pattern(punct, &ts_iter) {
+                    if let Some(group) = is_repeat_pattern(punct, &mut ts_iter) {
                         // Matched the repetition pattern
                         out_ts.extend(self.expand_section(group.stream()));
-
-                        // Advance the token stream iterator past the *
-                        ts_iter.next();
-                        ts_iter.next();
 
                         continue;
                     }
